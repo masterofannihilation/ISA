@@ -1,37 +1,61 @@
 #include "p2nprobe.hpp"
 
-int main (int argc, char *argv[]) 
-{
-    int n;
+void agregateFlows(Flow &flow) {
+    
+}
+
+void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
+    //parse the Ethernet header
+    struct ether_header *eth_header = (struct ether_header *) packet;
+    //check if packet is ip
+    if (ntohs(eth_header->ether_type) == ETHERTYPE_IP) {
+        //parse the IP header
+        struct ip *ip_header = (struct ip*)(packet + sizeof(struct ether_header));
+        //check if packet is TCP
+        if (ip_header->ip_p == IPPROTO_TCP) {
+            //parse the TCP header
+            struct tcphdr *tcp_header = (struct tcphdr*)(packet + sizeof(struct ether_header) + (ip_header->ip_hl * 4));
+
+            Flow flow;
+            flow.src_ip = ip_header->ip_src;
+            flow.dst_ip = ip_header->ip_dst;
+            flow.src_port = ntohs(tcp_header->th_sport);
+            flow.dst_port = ntohs(tcp_header->th_dport);
+            flow.protocol = ip_header->ip_p;
+            flow.packet_count = 1;
+            flow.byte_count = pkthdr->len;
+            flow.flow_start = pkthdr->ts.tv_sec;
+            flow.flow_end = pkthdr->ts.tv_sec;
+
+            //agregate packets into flows
+            agregateFlows(flow);
+        }
+    }
+}
+
+int main (int argc, char *argv[]) {
     char errbuf[PCAP_ERRBUF_SIZE];      // constants defined in pcap.h
-    const u_char *packet;               // pointer to the captured packet
-    struct pcap_pkthdr header;          // PCAP header (packet envelope created by a packet capturing tool)
     pcap_t *handle;                     // file handle
 
-    if(argc != 2) 
-    {
+    if(argc != 2) {
         cerr << "No filename" << endl;
     }
 
     //open pcap file
     handle = pcap_open_offline(argv[1], errbuf);
-    if(handle == NULL)
-    {
-        cerr << "Can't open pcap input file" << endl;
+    if(handle == NULL){
+        cerr << "Error opening pcap file" << errbuf << endl;
         return 1;  
     }
 
-    while ((packet = pcap_next(handle, &header)) != NULL)
-    {
-        n++;
-
-        // print the captured packet info: packet number, length and timestamp
-        printf("Packet no. %d:\n",n);
-        printf("\tPacket length = %d bytes, received at %s",header.len,ctime((const time_t*)&header.ts.tv_sec));  
+    // process packets from pcap file
+    if(pcap_loop(handle, 0, packetHandler, NULL) < 0 ) {
+        cerr << "Error reading packets from pcap file" << errbuf << endl;
+        pcap_close(handle);
+        return 1;
     }
 
-
-    //close the file and deallocate
+    //close pcap file
     pcap_close(handle);
     return 0;
 }
