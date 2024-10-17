@@ -142,6 +142,9 @@ int main (int argc, char *argv[]) {
         return 1;
     }
 
+    const char* collector_ip = "127.0.0.1";
+    uint16_t collector_port = 2055;
+
     std::vector<NetFlowV5Record> records;
     // Populate records with your flow data
     // Example:
