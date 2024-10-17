@@ -1,3 +1,9 @@
+/**
+ * @author Boris Hatala xhatal02
+ * @file p2nprobe.hpp
+ * @date 
+ */
+
 #ifndef P2NPROBE_H
 #define P2NPROBE_H
 
@@ -85,8 +91,6 @@ struct NetFlowV5Packet {
 };
 
 #define MAX_NETFLOW_PACKET 30
-#define COLL_IP "127.0.0.1"
-#define COLL_PORT 2055
 #define BUFFFER_SIZE 1024
 
 #define NETFLOW_V5_HEADER_SIZE 24

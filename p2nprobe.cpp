@@ -1,4 +1,50 @@
+/**
+ * @author Boris Hatala xhatal02
+ * @file p2nprobe.cpp
+ * @date 
+ */
+
 #include "p2nprobe.hpp"
+
+void parseArgs(int argc, char *argv[], string &filename, string &collector_ip, string &collector_port, int &activeTO, int& inactiveTO) {
+    int opt;
+    //default values
+    activeTO = 60;
+    inactiveTO = 60;
+
+    while((opt = getopt(argc, argv, "a:i:")) != -1){
+        switch (opt)
+        {
+        case 'a':
+            activeTO = stoi(optarg);
+            break;
+        case 'i':
+            inactiveTO = stoi(optarg);
+            break;        
+        case '?':
+                cerr << "Unknown option: " << char(optopt) << "\n";
+                break;
+        default:
+            break;
+        }
+    }
+
+    for (int i = optind; i < argc; i++) {
+        string arg = argv[i];
+
+        if(arg.find(".pcap") != std::string::npos) {
+            filename = argv[i];
+        }
+        else if(arg.find(':') != std::string::npos) {
+            size_t colonPos = arg.find(':');
+            collector_ip = arg.substr(0,colonPos);
+            collector_port = arg.substr(colonPos + 1);
+        }
+        else{
+            cerr << "Missing arguments" << endl;
+        }
+    }
+}
 
 void printFlows() {
     std::cout << "Current Flows:\n";
@@ -82,7 +128,16 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
     }
 }
 
-void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const std::vector<NetFlowV5Record>& records){
+void initNetFlowV5Packet(NetFlowV5Packet &packet) {
+    memset(&packet, 0, sizeof(packet));
+    packet.header.version = htons(5);
+    packet.header.sysUptime = htonl(123456); // Example uptime
+    packet.header.unixSecs = htonl(time(NULL));
+    packet.header.unixNsecs = htonl(0);
+    packet.header.flowSequence = htonl(1); // Example sequence number
+}
+
+void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const NetFlowV5Packet &packet){
     //Create a UDP socket
     int udpSocket = socket(AF_INET, SOCK_DGRAM, 0);
     if ( udpSocket< 0){
@@ -92,29 +147,20 @@ void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const std:
     struct sockaddr_in collAddr;
     memset(&collAddr, 0, sizeof(collAddr)); // Zero out the entire structure
     collAddr.sin_family = AF_INET;
-    collAddr.sin_port = htons(COLL_PORT);
+    collAddr.sin_port = htons(collector_port);
+    inet_pton(AF_INET, collector_ip, &collAddr.sin_addr);
 
-    // Prepare NetFlow v5 packet
-    NetFlowV5Header header;
-    memset(&header, 0, sizeof(header));
-    header.version = htons(5);
-    header.count = htons(records.size());
-    header.sysUptime = htonl(123456); // Example uptime
-    header.unixSecs = htonl(time(NULL));
-    header.unixNsecs = htonl(0);
-    header.flowSequence = htonl(1); // Example sequence number
-
-    /// Serialize header and records into buffer
-    uint8_t buffer[NETFLOW_V5_HEADER_SIZE + NETFLOW_V5_MAX_RECORDS * NETFLOW_V5_RECORD_SIZE];
-    memcpy(buffer, &header, NETFLOW_V5_HEADER_SIZE);
-    for (size_t i = 0; i < records.size(); ++i) {
-        memcpy(buffer + NETFLOW_V5_HEADER_SIZE + i * NETFLOW_V5_RECORD_SIZE, &records[i], NETFLOW_V5_RECORD_SIZE);
-    }
+    // Serialize the packet into a buffer
+    uint8_t buffer[sizeof(NetFlowV5Packet)];
+    memcpy(buffer, &packet, sizeof(NetFlowV5Packet));
 
     // Send packet to collector
-    if (sendto(udpSocket, buffer, NETFLOW_V5_HEADER_SIZE + records.size() * NETFLOW_V5_RECORD_SIZE, 0,
-               (const struct sockaddr*)&collAddr, sizeof(collAddr)) < 0) {
+    ssize_t sentBytes = sendto(udpSocket, buffer, sizeof(NetFlowV5Packet), 0, (const struct sockaddr*)&collAddr, sizeof(collAddr));
+    if (sentBytes < 0) {
         perror("sendto failed");
+    } 
+    else {
+        cout << "Sent " << sentBytes << " bytes to " << collector_ip << ":" << collector_port << endl;
     }
 
     close(udpSocket);
@@ -124,12 +170,20 @@ int main (int argc, char *argv[]) {
     char errbuf[PCAP_ERRBUF_SIZE];      // constants defined in pcap.h
     pcap_t *handle;                     // file handle
 
-    if(argc != 2) {
-        cerr << "No filename" << endl;
-    }
+    string filename;
+    string collIp;
+    string collPort;
+    int activeTO;
+    int inactiveTO;
+
+    parseArgs(argc, argv, filename, collIp, collPort, activeTO, inactiveTO);
+
+    const char* collector_ip = collIp.c_str();
+    uint16_t collector_port = static_cast<uint16_t>(stoi(collPort));
+    const char* pcap_filename = filename.c_str();   
 
     //open pcap file
-    handle = pcap_open_offline(argv[1], errbuf);
+    handle = pcap_open_offline(pcap_filename, errbuf);
     if(handle == NULL){
         cerr << "Error opening pcap file" << errbuf << endl;
         return 1;  
@@ -142,25 +196,49 @@ int main (int argc, char *argv[]) {
         return 1;
     }
 
-    const char* collector_ip = "127.0.0.1";
-    uint16_t collector_port = 2055;
+    printf("Number of flows agregated: %ld\n", flows.size());
 
-    std::vector<NetFlowV5Record> records;
-    // Populate records with your flow data
-    // Example:
-    NetFlowV5Record record;
-    memset(&record, 0, sizeof(record));
-    record.srcAddr = inet_addr("147.229.197.85");
-    record.dstAddr = inet_addr("157.240.30.63");
-    record.packets = htonl(10);
-    record.bytes = htonl(1000);
-    records.push_back(record);
+    //initialize NetFlowV5 packet
+    NetFlowV5Packet packet;
+    initNetFlowV5Packet(packet);
+    
+    size_t record_count = 0;
 
-    sendNetFlowV5(collector_ip, collector_port, records);
+    //fill records with flows
+    for(const auto &entry : flows) {
+        const Flow &flow = entry.second;
+
+        NetFlowV5Record &record = packet.records[record_count];
+        record.srcAddr = flow.src_ip.s_addr;
+        record.dstAddr = flow.dst_ip.s_addr;
+        record.packets = htonl(flow.packet_count);
+        record.bytes = htonl(flow.byte_count);
+        record.srcPort = htons(flow.src_port);
+        record.dstPort = htons(flow.dst_port);
+        record.protocol = flow.protocol;
+        record.first = htonl(flow.flow_start);
+        record.last = htonl(flow.flow_end);
+
+        record_count++;
+        if(record_count == MAX_NETFLOW_PACKET){
+            packet.header.count = htons(record_count);
+            sendNetFlowV5(collector_ip, collector_port, packet);
+            record_count = 0;
+            
+            initNetFlowV5Packet(packet);
+        }
+    }
+
+    // Send any remaining records
+    if (record_count > 0) {
+        packet.header.count = htons(record_count);
+        sendNetFlowV5(collector_ip, collector_port, packet);
+    }
 
     // printFlows();
 
     //close pcap file
     pcap_close(handle);
+
     return 0;
 }
