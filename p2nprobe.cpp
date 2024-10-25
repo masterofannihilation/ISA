@@ -2,9 +2,25 @@
  * @author Boris Hatala xhatal02
  * @file p2nprobe.cpp
  * @date 
+ * @todo - timeouts :   determine flow where each packet belongs 
+ *                      update flow
+ *                      check active and inactive timeouts
+ *                      either export the flow or up
+ *                      
  */
 
 #include "p2nprobe.hpp"
+
+std::chrono::milliseconds getSystemUptime() {
+    std::chrono::milliseconds uptime(0u);
+    double uptime_seconds;
+    if (std::ifstream("/proc/uptime", std::ios::in) >> uptime_seconds) {
+        uptime = std::chrono::milliseconds(
+            static_cast<unsigned long long>(uptime_seconds * 1000.0)
+        );
+    }
+    return uptime;
+}
 
 void parseArgs(int argc, char *argv[], string &filename, string &collector_ip, string &collector_port, int &activeTO, int& inactiveTO) {
     int opt;
@@ -31,10 +47,11 @@ void parseArgs(int argc, char *argv[], string &filename, string &collector_ip, s
 
     for (int i = optind; i < argc; i++) {
         string arg = argv[i];
-
+        //look for pcap file
         if(arg.find(".pcap") != std::string::npos) {
             filename = argv[i];
         }
+        //find address and port based on ':'
         else if(arg.find(':') != std::string::npos) {
             size_t colonPos = arg.find(':');
             collector_ip = arg.substr(0,colonPos);
@@ -128,13 +145,19 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
     }
 }
 
-void initNetFlowV5Packet(NetFlowV5Packet &packet) {
+void initNetFlowV5Packet(NetFlowV5Packet &packet, size_t flow_sequence) {
+    //zero out whole header of packet and set header
     memset(&packet, 0, sizeof(packet));
     packet.header.version = htons(5);
-    packet.header.sysUptime = htonl(123456); // Example uptime
-    packet.header.unixSecs = htonl(time(NULL));
-    packet.header.unixNsecs = htonl(0);
-    packet.header.flowSequence = htonl(1); // Example sequence number
+    packet.header.sysUptime = htonl(getSystemUptime().count());
+
+    packet.header.unixSecs = htonl(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+
+    packet.header.unixNsecs = htonl(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() % 1000 * 1000000);
+
+    packet.header.flowSequence = htonl(flow_sequence);
 }
 
 void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const NetFlowV5Packet &packet){
@@ -167,8 +190,8 @@ void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const NetF
 }
 
 int main (int argc, char *argv[]) {
-    char errbuf[PCAP_ERRBUF_SIZE];      // constants defined in pcap.h
-    pcap_t *handle;                     // file handle
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_t *handle;
 
     string filename;
     string collIp;
@@ -176,8 +199,10 @@ int main (int argc, char *argv[]) {
     int activeTO;
     int inactiveTO;
 
+    //parse command line arguments
     parseArgs(argc, argv, filename, collIp, collPort, activeTO, inactiveTO);
 
+    //convert them into needed types
     const char* collector_ip = collIp.c_str();
     uint16_t collector_port = static_cast<uint16_t>(stoi(collPort));
     const char* pcap_filename = filename.c_str();   
@@ -200,8 +225,7 @@ int main (int argc, char *argv[]) {
 
     //initialize NetFlowV5 packet
     NetFlowV5Packet packet;
-    initNetFlowV5Packet(packet);
-    
+    size_t flow_sequence = 0;    
     size_t record_count = 0;
 
     //fill records with flows
@@ -221,18 +245,21 @@ int main (int argc, char *argv[]) {
 
         record_count++;
         if(record_count == MAX_NETFLOW_PACKET){
+            initNetFlowV5Packet(packet, flow_sequence);
             packet.header.count = htons(record_count);
             sendNetFlowV5(collector_ip, collector_port, packet);
             record_count = 0;
-            
-            initNetFlowV5Packet(packet);
+            flow_sequence++;                        
+            initNetFlowV5Packet(packet, flow_sequence);
         }
     }
 
     // Send any remaining records
     if (record_count > 0) {
+        initNetFlowV5Packet(packet, flow_sequence);
         packet.header.count = htons(record_count);
         sendNetFlowV5(collector_ip, collector_port, packet);
+        flow_sequence++;
     }
 
     // printFlows();
