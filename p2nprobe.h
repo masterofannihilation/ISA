@@ -44,11 +44,26 @@ struct Flow {
     uint32_t flow_end;            // Flow end timestamp (could use time_t)
 };
 
-//map for storing flows
-map<string, Flow> flows;
+//map for storing activeFlows where packets can be agregated
+map<string, Flow> activeFlows;
+//map for storing flows that are waiting to be sent
+map<string, Flow> flowsBuffer;
 
 //reference system time
-uint32_t reference_time = 0;
+uint32_t reference_time;
+
+//active and inactive timeouts
+int activeTO;
+int inactiveTO;
+
+//collector ip and port
+const char* collector_ip;
+uint16_t collector_port;
+
+unsigned int record_count;
+size_t flow_sequence;
+
+
 
 // NetFlow v5 Header (24 bytes)
 struct NetFlowV5Header {
@@ -57,7 +72,7 @@ struct NetFlowV5Header {
     uint32_t sysUptime;         // Current time in milliseconds since the device started
     uint32_t unixSecs;          // Current Unix time (seconds since 1970)
     uint32_t unixNsecs;         // Residual nanoseconds of the current second
-    uint32_t flowSequence;      // Sequence counter of total flows exported
+    uint32_t flowSequence;      // Sequence counter of total activeFlows exported
     uint8_t engineType;         // Type of flow-switching engine (e.g., router, switch)
     uint8_t engineID;           // ID of the flow-switching engine
     uint16_t samplingInterval;  // Sampling mode and interval
@@ -104,12 +119,15 @@ void parseArgs(int argc, char *argv[], string &filename, string &collector_ip, s
 
 //handle TCP packets
 void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet);
-//agregate packets into flows based on key
+// void handlePacket(const struct ip *ip_header, const struct tcphdr *tcp_header, const struct pcap_pkthdr *pkthdr, uint32_t current_time);
+void handlePacket(const struct ip *ip_header, const struct tcphdr *tcp_header, const struct pcap_pkthdr *pkthdr, uint32_t current_time, NetFlowV5Packet &packet, unsigned int &record_count, size_t &flow_sequence);
+//agregate packets into activeFlows based on key
 void agregateFlows(const struct ip *ip_header, const struct tcphdr *tcp_header, const struct pcap_pkthdr *pkthdr);
 string createFlowKey(struct in_addr src_ip, struct in_addr dst_ip, uint16_t src_port, uint16_t dst_port);
 
 void initNetFlowV5Packet(NetFlowV5Packet &packet, size_t flow_sequence);
-void populateNetFlowV5(const char *collector_ip, uint16_t collector_port);
+// void populateNetFlowV5(const char *collector_ip, uint16_t collector_port, map<string, Flow> &flows);
+void populateNetFlowV5(const char *collector_ip, uint16_t collector_port, map<string, Flow> &flows, NetFlowV5Packet &packet, unsigned int &record_count, size_t &flow_sequence);
 void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const NetFlowV5Packet &packet);
 
 #endif
