@@ -1,7 +1,7 @@
 /**
  * @author Boris Hatala xhatal02
  * @file p2nprobe.hpp
- * @date 
+ * @date 18.11.2024
  */
 
 #ifndef P2NPROBE_H
@@ -49,6 +49,7 @@ map<string, Flow> activeFlows;
 //map for storing flows that are waiting to be sent
 map<string, Flow> flowsBuffer;
 
+bool firstPacket;
 //reference system time
 uint32_t reference_time;
 
@@ -62,6 +63,9 @@ uint16_t collector_port;
 
 unsigned int record_count;
 size_t flow_sequence;
+
+//start time of the exporter program
+std::chrono::system_clock::time_point program_start;
 
 
 
@@ -126,6 +130,7 @@ void agregateFlows(const struct ip *ip_header, const struct tcphdr *tcp_header, 
 string createFlowKey(struct in_addr src_ip, struct in_addr dst_ip, uint16_t src_port, uint16_t dst_port);
 
 void initNetFlowV5Packet(NetFlowV5Packet &packet, size_t flow_sequence);
+void sendRest(NetFlowV5Packet &packet, size_t &flow_sequence);
 // void populateNetFlowV5(const char *collector_ip, uint16_t collector_port, map<string, Flow> &flows);
 void populateNetFlowV5(const char *collector_ip, uint16_t collector_port, map<string, Flow> &flows, NetFlowV5Packet &packet, unsigned int &record_count, size_t &flow_sequence);
 void sendNetFlowV5(const char* collector_ip, uint16_t collector_port, const NetFlowV5Packet &packet);

@@ -1,3 +1,13 @@
+/**
+ * @file p2nprobe.cpp
+ * @author Boris Hatala xhatal02
+ * @date 18.11.2024
+ * 
+ * @todo memory leaks
+ * @todo sequence error
+ * @todo edge case s 0 pri timeoutoch
+ */
+
 #include "p2nprobe.h"
 
 void printNetFlowV5Packet(const NetFlowV5Packet &packet) {
@@ -87,8 +97,6 @@ string createFlowKey(struct in_addr src_ip, struct in_addr dst_ip, uint16_t src_
 
 void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
     NetFlowV5Packet *packetPtr = reinterpret_cast<NetFlowV5Packet*>(userData);
-    // static size_t record_count = 0;
-    static size_t flow_sequence = 0;
 
     if (reference_time == 0) {
         reference_time = pkthdr->ts.tv_sec * 1000 + pkthdr->ts.tv_usec / 1000;
@@ -116,16 +124,13 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
 void checkTimeouts(uint32_t current_time) {
     for (auto it = activeFlows.begin(); it != activeFlows.end(); ) {
         Flow &flow = it->second;
-        if (flow.dst_port == 50046 || flow.src_port == 50046) {
-            // std::cout << "Current Time: " << current_time << " ms, Flow End Time: " << flow.flow_end << " ms" << std::endl;
-        }
-        if (current_time - flow.flow_end > static_cast<uint32_t>(inactiveTO) * 1000) {
+        if (current_time - flow.flow_end >= static_cast<uint32_t>(inactiveTO) * 1000) {
             // cout << "INACTIVE TIMEOUT" << endl;
             flowsBuffer[it->first] = flow;
             it = activeFlows.erase(it);
         }
         // Check for active timeout
-        else if (current_time - flow.flow_start > static_cast<uint32_t>(activeTO) * 1000) {
+        else if (current_time - flow.flow_start >= static_cast<uint32_t>(activeTO) * 1000) {
             // cout << "ACTIVE TIMEOUT" << endl;
             flowsBuffer[it->first] = flow;
             it = activeFlows.erase(it);
@@ -218,8 +223,13 @@ void populateNetFlowV5Packet(NetFlowV5Packet &packet, unsigned int &record_count
     record.srcPort = htons(flow.src_port);
     record.dstPort = htons(flow.dst_port);
     record.protocol = flow.protocol;
-    record.first = htonl(flow.flow_start - reference_time);
-    record.last = htonl(flow.flow_end - reference_time);
+
+    // Calculate the difference between flow_start and program_start in milliseconds
+    record.first = htonl(flow.flow_start - std::chrono::duration_cast<std::chrono::milliseconds>(program_start.time_since_epoch()).count());
+    record.last = htonl(flow.flow_end - std::chrono::duration_cast<std::chrono::milliseconds>(program_start.time_since_epoch()).count());
+
+    // record.first = htonl(flow.flow_start - reference_time);
+    // record.last = htonl(flow.flow_end - reference_time);
     record_count++;
 }
 
@@ -227,8 +237,8 @@ void sendNetFlowV5IfNeeded(const char *collector_ip, uint16_t collector_port, Ne
     if (record_count == MAX_NETFLOW_PACKET) {
         packet.header.count = htons(record_count);
         sendNetFlowV5(collector_ip, collector_port, packet);
+        flow_sequence += MAX_NETFLOW_PACKET;
         record_count = 0;
-        flow_sequence++;
         initNetFlowV5Packet(packet, flow_sequence);
     }
 }
@@ -240,7 +250,7 @@ void populateNetFlowV5(const char *collector_ip, uint16_t collector_port, map<st
     {
         const Flow &flow = it -> second;
         populateNetFlowV5Packet(packet, record_count, flow);
-        cout << "RECORD COUNT: " << record_count << endl;
+        packet.header.count = htons(record_count);
 
         // Remove the flow from the buffer
         it = flows.erase(it);
@@ -254,10 +264,17 @@ void initNetFlowV5Packet(NetFlowV5Packet &packet, size_t flow_sequence) {
     //zero out whole header of packet and set it
     memset(&packet, 0, sizeof(packet));
     packet.header.version = htons(5);
-    packet.header.sysUptime = htonl(reference_time);
 
-    packet.header.unixSecs = htonl(reference_time / 1000);
-    packet.header.unixNsecs = htonl((reference_time % 1000) * 1000000);
+
+    auto now = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - program_start).count();
+    packet.header.sysUptime = htonl(duration);
+
+    packet.header.unixSecs = htonl(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
+
+    auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+    packet.header.unixNsecs = htonl(now_ns % 1000000000);
+
     packet.header.flowSequence = htonl(flow_sequence);
 }
 
@@ -269,6 +286,8 @@ void moveActiveFlowsToBuffer() {
 }
 
 int main(int argc, char *argv[]) {
+    program_start = std::chrono::system_clock::now();
+    
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle;
 
@@ -296,7 +315,7 @@ int main(int argc, char *argv[]) {
     // Initialize NetFlowV5 packet
     NetFlowV5Packet packet;
     record_count = 0;
-    size_t flow_sequence = 0;
+    flow_sequence = 0;
     initNetFlowV5Packet(packet, flow_sequence);
 
     // process individual packets from pcap file in packet handler
@@ -310,8 +329,6 @@ int main(int argc, char *argv[]) {
     // Move reamining active flows to flowsBuffer
     moveActiveFlowsToBuffer();
 
-    printFlows();
-
     // Populate final nfv5 packet and send it to collector
     if (flowsBuffer.size() > 0) {
         populateNetFlowV5(collector_ip, collector_port, flowsBuffer, packet, record_count, flow_sequence);
@@ -322,11 +339,7 @@ int main(int argc, char *argv[]) {
     {
         packet.header.count = htons(record_count);
         sendNetFlowV5(collector_ip, collector_port, packet);
-        flow_sequence++;
     }
-
-    //close pcap file
-    pcap_close(handle);
 
     return 0;
 }
