@@ -1,0 +1,232 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[left=1.4cm,text={18.2cm, 25.2cm},top=2.3cm]{geometry}
+
+\usepackage{times}
+\usepackage[czech]{babel}
+\usepackage[IL2]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{listings}
+
+\usepackage{amsmath, amsthm, amssymb}
+\usepackage[bottom]{footmisc}
+\usepackage{graphicx}
+\usepackage{hyperref}
+
+\usepackage{etoolbox}
+\patchcmd{\thebibliography}{\section*{\refname}}{}{}{}
+
+\lstset{
+    language=C,
+    basicstyle=\ttfamily,
+    stepnumber=1,
+    numbersep=5pt,
+    showstringspaces=false,
+    tabsize=4,
+    breaklines=true,
+    breakatwhitespace=false,
+    frame=single,
+    captionpos=b
+}
+
+\begin{document}
+
+\begin{titlepage}
+\thispagestyle{empty}
+
+    \begin{center}
+
+        {\Huge \textsc{Vysoké učení technické v~Brně \\[0.5em]}}
+
+        {\huge \textsc{Fakulta informačních technologií}}
+
+        \vspace{\stretch{0.382}}
+
+        {\LARGE Sieťové aplikácie a správa sietí \\[0.5em]
+        PCAP NetFlow v5 exportér
+         }
+
+        \vspace{\stretch{0.618}}
+
+    \end{center}
+{\Large 2024 \hfill Boris Hatala (xhatal02)}
+
+\end{titlepage}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Úvod}
+Táto technická správa popisuje implementáciu PCAP NetFLow v5 exportéru vo forme konzolovej aplikácie
+napísanej v jazyku C++. Aplikácia je kompilovaná pomocou g++ a je určená pre Linux.
+
+\subsection*{Problematika}
+\addcontentsline{toc}{subsection}{Problematika}
+V rámci tohto projektu sa zameriavame na analýzu sieťovej prevádzky a jej prevod do formátu NetFlow v5, ktorý predstavuje štandard pre monitorovanie a analýzu sieťových tokov. Sieťová prevádzka je zvyčajne zachytávaná do PCAP súborov, ktoré obsahujú detailný záznam o jednotlivých sieťových paketoch. Z týchto záznamov je možné rekonštruovať a analyzovať toky, ktoré predstavujú agregované informácie o komunikácii medzi dvoma sieťovými bodmi, charakterizované napríklad IP adresami, portmi a protokolmi.
+\vspace{0.3cm}
+
+Cieľom projektu je vytvoriť nástroj \texttt{p2nprobe}, ktorý dokáže:
+\begin{itemize}
+    \item Načítat sieťové pakety zo súboru vo formáte PCAP
+    \item Extrahovať informácie o sieťových tokoch výhradne pre protokol TCP
+    \item Agregovať tieto informácie do formátu NetFlow v5
+    \item Odosielať agregované toky na vzdialený kolektor prostredníctvom UDP
+\end{itemize}
+
+\section{Návod na použitie}
+Program je potrebné preložiť pomocou prikázu \texttt{make}. Následne je možné ho spustiť z príkazového riadku s nasledovnými argumentami:
+\begin{verbatim}
+./p2nprobe [-a <akt. t.>] [-i <neak. t.>] <pcap súbor> <kolektor_ip:kolektor_port>
+\end{verbatim}
+\begin{itemize}
+    \item \texttt{-a <aktívny timeout>} - Nastaví aktívny timeout v sekundách
+    \item \texttt{-i <neaktívny timeout>} - Nastaví neaktívny timeout v sekundách
+    \item \texttt{<pcap súbor>} - Cesta k PCAP súboru, ktorý sa má analyzovať.
+    \item \texttt{<kolektor\_ip:kolektor\_port>} - Adresa a port NetFlow kolektora.
+\end{itemize}
+
+Argumenty \texttt{-a} a \texttt{-i} sú voliteľné, ak nepoužijete tieto argumenty, tak aktívny aj neaktívny timeout bude automaticky nastavený na 60 sekúnd. Argumenty v príkazovom riadku môžu byť v hocijakom poradí.
+\subsection*{Príklad spustenia}
+\addcontentsline{toc}{subsection}{Príklad spustenia}
+
+\begin{verbatim}
+./p2nprobe large.pcap 127.0.0.1:2055 -a 10 -i 3 
+\end{verbatim}
+Program spracuje súbor \texttt{large.pcap}, ktorého toky vo formáte NetFlow v5 pošle na kolektor s ip adresou \texttt{127.0.0.1} a portom \texttt{2055}. Aktívny timeout bude nastavený na 10 sekúnd a neaktívny na 3 sekundy.
+
+\section{Návrh}
+Aplikácia je rozdelená na zdrojový súbor \texttt{p2nprobe.cpp} a hlavičkový súbor \texttt{p2nprobe.h}. V tejto kapitole sú popísané jednotlivé časti implementácie a technické detaily.
+\vspace{0.3cm}
+
+\subsection*{Knižnice}
+\addcontentsline{toc}{subsection}{Knižnice}
+
+Program využíva knižnice:
+\begin{itemize}
+    \item \texttt{pcap} na spracovanie PCAP súborov.
+    \item Siete (\texttt{netinet} a \texttt{arpa/inet}) na prácu s IP adresami a TCP/UDP hlavičkami.
+    \item Štandardná knižnica C++ (\texttt{map}, \texttt{string}) na ukladanie aktívnych a čakajúcich tokov.
+\end{itemize}
+
+\subsection*{Štruktúry}
+\addcontentsline{toc}{subsection}{Dôležité štruktúry}
+
+\begin{description}
+    \item[\texttt{Flow}] Štruktúra reprezentujúca jednotlivý tok, obsahuje:
+    \begin{itemize}
+        \item Zdrojová a cieľová IP adresa (\texttt{struct in\_addr}).
+        \item Zdrojový a cieľový port (\texttt{uint16\_t}).
+        \item Počet paketov a bajtov v toku (\texttt{uint32\_t}).
+        \item Čas začiatku a konca toku (\texttt{uint32\_t}).
+    \end{itemize}
+    \item[\texttt{NetFlowV5Packet}] Štruktúra obsahujúca hlavičku pakety NetFlow v5 a maximálne 30 záznamov typu NetFlow v5.
+    \\
+    \begin{lstlisting}[language=C++]
+    struct NetFlowV5Packet {
+        struct NetFlowV5Header header;
+        struct NetFlowV5Record records[30];
+};
+\end{lstlisting}
+    \begin{itemize}
+        \item \texttt{NetFlowV5Header} je štruktúra, ktorá predstavuje hlavičku NetFlow v5 pakety, nachádza sa v nej verzia pakety, doba prevádzky exportéra v milisekundách pred odoslaním, počet záznamov v pakete atď.
+        \item \texttt{NetFlowV5Record} je štruktúra, ktorá obsahuje informácie o jednotlivých záznamoch v NetFlow v5 pakete ako sú zdrojová a cieľová ip adresa a port, začiatok a koniec záznamu v milisekundách vzhľadom na dobu prevádzky exportéra atď. 
+    \end{itemize}
+
+    \item[\texttt{activeFlows}] 
+    Typ \texttt{std::map} obsahujúci aktívne toky, kde kľúčom je zdrojová a cieľová IP adresa a port.
+    \item[\texttt{flowsBuffer}] Typ \texttt{std::map} obsahujúci toky, ktoré čakajú na export. 
+\end{description}
+
+\section{Implementácia}
+Vstupným bodom programu je funkcia \texttt{main}, ktorá spracuje argumenty z príkazového riadka a 
+následne sa pokúsi otvoriť PCAP súbor.
+
+\subsection*{Logika spracovania paketov}
+\addcontentsline{toc}{subsection}{Logika spracovania paketov}
+
+Zavolaním funkcie \texttt{pcap\_loop} sa začne spracovávať každý paket pomocou callback 
+funkcie \texttt{callback}, kde sa zisťuje, či je paket TCP.
+Ak áno, tak sa z neho extrahujú informácie o toku a aktualizuje sa záznam v \texttt{activeFlows}.
+Teda, buď sa vytvorí nový tok, alebo sa aktualizuje už existujúci. Toky sú ukladané do mapy 
+\texttt{activeFlows} podľa zdrojovej a cieľovej IP adresy a portu.
+
+\subsection*{Timeouty}
+\addcontentsline{toc}{subsection}{Timeouty}
+
+Po každom spracovanom pakete sa prejde mapa \texttt{activeFlows} a zistí sa, 
+či nejaký tok nepresiahol timeout. Tento výpočet je vykonávaný na základe časového údaju 
+z poslednej načítanej pakety. Ak tok presiahol aktívny timeout alebo neaktívny,
+ tak sa presunie do mapy \texttt{flowsBuffer} na export.
+
+\subsection*{Inicializácia NetFlow v5 pakety}
+\addcontentsline{toc}{subsection}{Inicializácia NetFlow v5 pakety}
+
+Inicializácia NetFlow v5 pakety sa vykonáva vo funkcii \texttt{initNetFlowV5Packet}. 
+Táto funkcia nastaví všetky potrebné polia hlavičky NetFlow v5 pakety a zabezpečí, že paketa 
+je pripravená na naplnenie záznamami o tokoch.
+Funkcia \texttt{initNetFlowV5Packet} vynuluje celú štruktúru pakety pomocou \texttt{memset}, 
+nastaví verziu pakety, vypočíta dobu prevádzky exportéra v milisekundách od začiatku programu a nastaví pole 
+\texttt{sysUptime}, nastaví \texttt{unixSecs} a \texttt{unixNsecs}, a sekvenciu toku do poľa \texttt{flowSequence}.
+
+\subsection*{NetFlow v5 záznam}
+\addcontentsline{toc}{subsection}{NetFlow v5 záznam}
+
+Záznamy sú postupne pridávané do NetFlow v5 pakety v cykle, kde sa prechádza mapa \texttt{flowsBuffer}.
+Položka first a last sú vypočítané v milisekundách na základe časového údaja pakety a času začiatku programu.
+
+\subsection*{Export}
+\addcontentsline{toc}{subsection}{Export}
+
+Po každom spracovanom pakete sa prejde mapa \texttt{flowsBuffer} a overí sa či nejaký tok čaká na export.
+Ak áno, vytvárajú sa záznamy v NetFlow v5 formáte, zapĺňa sa paketa a záznamy z 
+\texttt{flowsBuffer} sa postupne mažú. Paketa sa odošle v momente, keď je naplnená, 
+teda obsahuje 30 záznamov, alebo keď program skončí spracovávanie PCAP súboru. V takom 
+prípade sa všetky zvyšné toky exportujú. Po exportovaní pakety sa incializuje nová a 
+proces sa opakuje.
+
+\section{Testovanie}
+Na testovanie boli použité  PCAP súbory generované pomocou programu \texttt{Wireshark} 
+alebo \texttt{tcpdump}, kolektor \texttt{nfcapd} z nástroja \texttt{nfdump}, 
+referenčný exportér \texttt{softwflowd} a program \texttt{Wireshark}. Pri testovaní a debugovaní
+mi rovnako pomáhali aj rôzne print funckie.
+
+\subsection*{Pomocou \texttt{nfcapd} a \texttt{softwflowd}}
+\addcontentsline{toc}{subsection}{Pomocou \texttt{nfcapd} a \texttt{softwflowd}}
+
+Kolektor \texttt{nfcapd} som spustil na lokálnej adrese a porte 2055.
+Exportoval som rovnaké PCAP súbory pomocou \texttt{softwflowd} a \texttt{p2nprobe} na 
+kolektor \texttt{nfcapd} a následne som pomocou nástroja \texttt{nfdump} porovnal výstupy.
+Analyzoval som počet exportovaných tokov a správnosť exportovaných informácií.
+
+\subsection*{Pomocou \texttt{Wireshark}}
+\addcontentsline{toc}{subsection}{Pomocou \texttt{Wireshark}}
+
+Po spustení kolektoru \texttt{nfcapd} som exportoval PCAP súbor pomocou \texttt{p2nprobe} a
+\texttt{softwflowd} sledoval som správnosť exportovaných informácií pomocou programu 
+\texttt{Wireshark}.
+
+\newpage
+
+\section*{Zdroje}
+\addcontentsline{toc}{section}{Zdroje}
+
+\begin{thebibliography}{9}
+
+\bibitem{cisco_format} 
+Cisco Systems: \emph{NetFlow Export Datagram Format}. Dostupné z: 
+\url{https://www.cisco.com/c/en/us/td/docs/net_mgmt/netflow_collection_engine/3-6/user/guide/format.html#wp1006108}.
+
+\bibitem{lucas_network_flow}
+Lucas, M. W.: \emph{Network Flow Analysis}. No Starch Press, 2010.
+
+\bibitem{rfc3954} 
+Cisco Systems: \emph{RFC 3954: Cisco Systems NetFlow Services Export Version 9}. Dostupné z: 
+\url{https://datatracker.ietf.org/doc/html/rfc3954}.
+
+\bibitem{rfc7011} 
+Claise, B., Trammell, B., Aitken, P.: \emph{RFC 7011: Specification of the IP Flow Information Export (IPFIX) Protocol for the Exchange of Flow Information}. Dostupné z: 
+\url{https://datatracker.ietf.org/doc/html/rfc7011}.
+
+\end{thebibliography}
+
+\end{document}

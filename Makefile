@@ -1,6 +1,6 @@
 # Variables
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -g
+CXXFLAGS = -Wall -Wextra -Werror -std=c++17 -g 
 LDFLAGS = -lpcap
 TARGET = p2nprobe
 SRC = p2nprobe.cpp
