@@ -1,23 +1,25 @@
-Boris Hatala
-xhatal02
-18.11.2024
+# PCAP NetFlowV5 Exporter
 
-Tento program spracováva pcap súbory na extrakciu NetFlow v5 dát. Agreguje TCP toky, kontroluje časové limity a odosiela údaje o tokoch na zadanú IP adresu a port kolektora. Program podporuje príkazové argumenty pre aktívne a neaktívne časové limity a overuje zadanú IP adresu a port.
+This program is designed to process pcap files and extract NetFlow v5 data. It efficiently aggregates TCP flows, monitors timeouts, and sends the flow data to a designated collector. With support for command-line arguments, the program allows you to configure active and inactive timeouts.
 
-Príklad spustenia:
-./p2nprobe [-a <aktívny timeout>] [-i <neaktívny timeout>] <pcap súbor> <kolektor_ip:kolektor_port>
+## How to run
+### Prerequisities
+- g++
+- libcap
 
-- -a: aktívny časový limit v sekundách
-- -i: neaktívny časový limit v sekundách
-- pcap súbor: PCAP súbor
-- kolektor_ip: IP adresa kolektora
-- kolektor_port: port kolektora
+### Compile
 
-./p2nprobe large.pcap 127.0.0.1:2055 -a 10 -i 3 
+Run `make` in the root folder.
 
-Zoznam odovzdaných súborov:
-p2nprobe.cpp
-p2nprobe.h
-Makefile
-README
-manual.pdf
+### Usage
+
+`./p2nprobe <path to pcap file> [-a <active timeout>] [-i <inactive timeout>] <collector_ip:collector_port>`
+
+- -a: active timeout in seconds
+- -i: inactive timeout in seconds
+- pcap file: PCAP file
+- collector_ip: collector's IP address
+- collector_port: collector's port
+
+### Example usage
+`./p2nprobe test.pcap -a 10 -i 3 127.0.0.1:2055`
